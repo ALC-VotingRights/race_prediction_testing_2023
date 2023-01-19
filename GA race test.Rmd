@@ -1,0 +1,232 @@
+---
+title: "Testing Race Prediction Methods: Georgia"
+author: "Chris Iyer"
+date: "1/4/2023"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(future)
+library(future.callr)
+```
+
+```{r}
+# # Load voter files from 2020 and 2022
+# datapath <- '/Users/chrisiyer/_Current/alc/GA absentee/CI-GA_2020_2022_Elections/data/'
+# voters20 <- read.table(paste(datapath, 'voters2020.txt', sep = ''),
+#                         header=TRUE, sep="|", fill = TRUE, quote = "")
+# 
+# voters22 <- read.table(paste(datapath, 'voters2022.txt', sep = ''),
+#                         header=FALSE, sep="|", fill = TRUE, quote = "")
+# colnames(voters22) <- colnames(voters20) # this one lacks header so need to add
+```
+
+```{r}
+# # select just name and race; merge the two files
+# cols <- c('REGISTRATION_NUMBER','FIRST_NAME','MIDDLE_MAIDEN_NAME','LAST_NAME', 'RACE', 'GENDER', 'BIRTHDATE', 'COUNTY_CODE', 'COUNTY_PRECINCT_ID', 'RESIDENCE_HOUSE_NUMBER', 'RESIDENCE_STREET_NAME', 'RESIDENCE_CITY', 'RESIDENCE_ZIPCODE')
+# 
+# df <- merge(voters20[,cols], voters22[,cols], all = TRUE)
+# df <- df %>% filter( !(RACE %in% c('', 'U')) )
+# 
+# write.csv(df, '/Users/chrisiyer/_Current/alc/_TX voters/GAlist_merged_cut.csv')
+```
+
+## Start here
+```{r}
+df <- read.csv('GAlist_merged_nonan.csv')
+
+include_other <- F
+if (!include_other) {
+  df <- df %>% filter(RACE != 'OT') # for now
+}
+#rename a couple columns for wru later
+colnames(df)[which(names(df) == 'LAST_NAME')] <- 'surname'
+colnames(df)[which(names(df) == 'FIRST_NAME')] <- 'first'
+
+head(df)
+```
+
+```{r}
+all_preds <- read.csv('GA_predictions.csv')
+```
+
+
+
+quantify sensitivity and PPV of each prediction method for each race
+```{r}
+# sensitivity (#asian_correct / #total_asian) and PPV (#asian_correct / #total_pred_asian)
+results <- function(preds, truth) {
+  for (i in unique(preds)) { # for each race in df$RACE
+    if (include_other | i != 'OT') {
+      corr <- sum(preds==i & preds==truth)
+      sens <- corr / sum(truth==i)
+      ppv <- corr / sum(preds==i)
+      print(paste('Race:', i, ' Sensitivity:', round(sens,4), ' PPV:', round(ppv, 4)))
+    }
+  }
+}
+```
+
+
+*METHOD 1*: predictrace
+```{r}
+library(predictrace)
+```
+
+```{r}
+pr_reform <- function(preds) {
+  df_arr <- c('WH', 'HP', 'BH', 'AP', 'AI')
+  pr_arr <- c('white', 'hispanic', 'black', 'asian', 'american_indian') # also gives "2 races", NA, and double-combinations (OTHER)
+  
+  return(case_when(
+    preds %in% pr_arr ~ df_arr[match(preds, pr_arr)],
+    TRUE ~ 'OT'
+  ))
+}
+```
+
+1a: predictrace surname only
+```{r}
+pr_lastname <- predictrace::predict_race(df$surname)
+results(pr_reform(pr_lastname$likely_race), df$RACE)
+```
+
+1b: predictrace first name only
+```{r}
+pr_firstname <- predictrace::predict_race(df$first, surname=FALSE)
+results(pr_reform(pr_firstname$likely_race), df$RACE)
+```
+
+1c: average the two
+
+```{r}
+pr_first_probs <- pr_firstname[,4:9]
+pr_last_probs <- pr_lastname[,4:9]
+pr_first_probs[is.na(pr_first_probs)] <- 0
+pr_last_probs[is.na(pr_last_probs)] <- 0
+
+pr_avg <- (pr_first_probs+ pr_last_probs) / 2
+
+pr_avg$likely_race <- apply(pr_avg, 1, function(x) paste0(names(pr_avg)[x == max(x)], collapse = '_'))
+
+pr_avg$likely_race <- case_when(
+  pr_avg$likely_race == 'probability_white' ~ 'white',
+  pr_avg$likely_race == 'probability_black' ~ 'black',
+  pr_avg$likely_race == 'probability_asian' ~ 'asian',
+  pr_avg$likely_race == 'probability_hispanic' ~ 'hispanic',
+  pr_avg$likely_race == 'probability_american_indian' ~ 'american_indian',
+  TRUE ~ '2races' # 2-races, also ties.
+)
+```
+
+```{r}
+results(pr_reform(pr_avg$likely_race), df$RACE)
+```
+
+```{r}
+# df to contain all predictions
+all_preds$pr_surname <- pr_lastname$likely_race
+all_preds$pr_firstname <- pr_firstname$likely_race
+all_presd$pr_avg <- pr_avg$likely_race
+```
+
+*METHOD 2*: wru
+```{r}
+library(wru)
+census_api_key <- '07513b28b4cf6b6398a9a8838b0fc52ea632a290'
+
+# notes:
+# voter.file must have a 'surname' column
+# if using geolocation, must have a 'state' column with 'ga' or 'tx'
+#   'county' (3 chars) 'tract' 'block_group' (1 char) 'block' (4 chars) 'place' (5 chars)
+#   surname.year = 2020
+# predict_race()
+#   surname.year = 2020
+#   year = '2020'
+#   census.geo = 'county' 'tract' 'block_group' 'block' 'place'
+#   census.key
+#   age & sex - condition predictions on age/sex
+#   census.data - presaved census data from get_census_data
+#   party - column name in voter file of party registration (1D, 2R, 0O)
+#   names.to.use - 'surname, first' 
+# get_census_data()
+#   key
+#   states = c('GA')
+#   age, sex - condition on these? 
+#   year = '2020'
+#   census.geo = 'block' default
+#   county.list from voter.file?
+```
+
+```{r}
+# tailor columns for desired wru inputs
+
+df$state <- 'GA'
+df$age <- 2023 - df$BIRTHDATE
+df$sex <- case_when(
+  df$GENDER == 'F' ~ 1,
+  df$GENDER == 'M' ~ 0,
+  TRUE ~ 3
+)
+
+cols <- c('first', 'surname', 'age', 'sex', 'COUNTY_CODE', 'state', 'RACE')
+df <- df[,cols]
+```
+
+```{r}
+rows <- c(2,70, 100, 327, 2242, 2955, 298, 59204, 46364, 949, 22643, 11264, 3114, 15856)
+df_small <- df[rows,] # for testing purposes
+```
+
+1a. surname-only matching (no geocoding)
+```{r}
+future::plan(future::multisession)
+wru_surname <- wru::predict_race(voter.file = df, surname.only = T, surname.year = '2020')
+wru_surname$preds <- c('WH', 'BH', 'HP', 'AP', 'OT')[apply(wru_surname[,20:24], 1, which.max)]
+results(wru_surname$preds, df$RACE)
+all_preds$wru_surname <- wru_surname$preds
+```
+
+
+1b. county-level geolocation added to model
+```{r}
+# deal with county codes:
+# county_codes <- read.csv('GWCounty_Number_List.csv') # just to see names
+# county_codes$fips <- read.csv('GA_FIPS_Codes.csv')$fips_county 
+
+
+fips <- read.csv('GA_FIPS_Codes.csv')$fips_county #alphabetical so it matches
+df$county <- str_pad(fips[df$COUNTY_CODE], 3, pad = '0')  # this is the FIPS county. just named 'county' b/c wru wants that
+
+```
+
+```{r}
+df_wru <- predict_race(voter.file = df, census.geo = "county", census.key = census_api_key)
+
+all_preds$wru_geo <- apply(df_wru[,9:13], 1, function(x) paste0(names(df_wru[,9:13])[x == max(x)], collapse = '_'))
+
+all_preds$wru_geo <- case_when(
+  all_preds$wru_geo == 'pred.whi' ~ 'WH',
+  all_preds$wru_geo == 'pred.bla' ~ 'BH',
+  all_preds$wru_geo == 'pred.asi' ~ 'AP',
+  all_preds$wru_geo == 'pred.his' ~ 'HP',
+  TRUE ~ 'OT',
+)
+```
+```{r}
+results(all_preds$wru_geo, all_preds$truth)
+```
+
+*METHOD 3*: Mixed predictions (sandbox)
+```{r}
+test <- case_when(
+  all_preds$wru_geo == 'AP' & all_preds$pr_avg == 'AP' & all_preds$et_wiki_full == 'AP' ~ 'AP',
+  T ~ 'WH'
+)
+results(test, all_preds$truth)
+# just looking for AP sens & PPV 
+```
+
+
+
