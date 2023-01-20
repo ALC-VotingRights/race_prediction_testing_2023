@@ -17,4 +17,22 @@ Link to google drive folder: https://drive.google.com/drive/folders/1kqZ6-R5Ji2_
 Results:
 Tl;dr WRU with geocoding reaches pretty solid and balanced performance for AAPIs as well as other racial groups. Predictrace full-name averaging comes in second. These options, as well as numerous different combination schemes of different predictions, can be titrated to minimize false positives vs. false negatives. But, as a first pass, I recommend using WRU with geocoding if you have access to county-, tract-, or block-level information, and using predictrace with an averaging scheme like the one I use in the absence of geographic data.
 
+
+Top Scorers:
+- WRU (surname + geocoding)
+    AP: sens = 67%, PPV = 86%
+    Slightly better on other races
+- Predictrace (firstname + surname average)
+    AP: sens = 64%, PPV = 89%
+- Combination of (1) and (2): wru_geo OR pr_avg 
+    AP: sens = 71%, PPV = 83%
+- Combination of (1) and (2): wru_geo AND pr_avg
+    AP: sens = 60%, PPV = 93%
+Choose various different combinations to maximize sensitivity or PPV
+- Max PPV: something like wru_geo AND pr_avg AND et_fl
+    Sens = 50% PPV = 95%
+- Max sens: something like wru_geo OR pr_avg OR et_fl_other
+    Sens = 98%, PPV = 60%
+
+
 More detailed results are discussed in results.pdf
