@@ -15,7 +15,7 @@ Link to google drive folder: https://drive.google.com/drive/folders/1kqZ6-R5Ji2_
     2. The raw data — merged GA voter list between 2020 and 2022 raw voter list files, excluding entries with unknown race (GAlist_merged_nonan.csv)
 
 Results:
-Tl;dr WRU with geocoding reaches pretty solid and balanced performance for AAPIs as well as other racial groups. Predictrace full-name averaging comes in second. These options, as well as numerous different combination schemes of different predictions, can be titrated to minimize false positives vs. false negatives. But, as a first pass, I recommend using WRU with geocoding if you have access to county-, tract-, or block-level information, and using predictrace with an averaging scheme like the one I use in the absence of geographic data.
+Tl;dr WRU with geocoding reaches pretty solid and balanced performance for AAPIs as well as other racial groups. Predictrace full-name averaging comes in second. These options, as well as numerous different combination schemes of different predictions, can be titrated to minimize false positives vs. false negatives. But, as a first pass, I recommend using WRU with geocoding if you have access to county-, tract-, or block-level information, and using predictrace with an averaging scheme like the one I use in the absence of geographic data. Different combinations of all the methods can be combined to titrate sensitivity and PPV respectively.
 
 
 Top Scorers:
