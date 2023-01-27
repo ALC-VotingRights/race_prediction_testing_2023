@@ -35,14 +35,26 @@ library(future.callr)
 ## Start here
 ```{r}
 df <- read.csv('GAlist_merged_nonan.csv')
-
-include_other <- F
-if (!include_other) {
-  df <- df %>% filter(RACE != 'OT') # for now
-}
-#rename a couple columns for wru later
-colnames(df)[which(names(df) == 'LAST_NAME')] <- 'surname'
-colnames(df)[which(names(df) == 'FIRST_NAME')] <- 'first'
+# include_other <- F
+# if (!include_other) {
+#   df <- df %>% filter(RACE != 'OT') # for now
+# }
+# #rename a couple columns for wru later
+# colnames(df)[which(names(df) == 'LAST_NAME')] <- 'surname'
+# colnames(df)[which(names(df) == 'FIRST_NAME')] <- 'first'
+# 
+# df$state <- 'GA'
+# 
+# df <- df[,-1]
+# df <- df[,-1]
+# 
+# # deal with county codes:
+# # county_codes <- read.csv('GWCounty_Number_List.csv') # just to see names
+# # county_codes$fips <- read.csv('GA_FIPS_Codes.csv')$fips_county 
+# fips <- read.csv('GA_FIPS_Codes.csv')$fips_county #alphabetical so it matches
+# df$county <- str_pad(fips[df$COUNTY_CODE], 3, pad = '0')  # this is the FIPS county. just named 'county' b/c wru wants that
+# 
+# df$address_full <- paste(df$RESIDENCE_HOUSE_NUMBER, df$RESIDENCE_STREET_NAME)
 
 head(df)
 ```
@@ -58,7 +70,7 @@ quantify sensitivity and PPV of each prediction method for each race
 # sensitivity (#asian_correct / #total_asian) and PPV (#asian_correct / #total_pred_asian)
 results <- function(preds, truth) {
   for (i in unique(preds)) { # for each race in df$RACE
-    if (include_other | i != 'OT') {
+    if (!is.na(i) & i != 'OT') {
       corr <- sum(preds==i & preds==truth)
       sens <- corr / sum(truth==i)
       ppv <- corr / sum(preds==i)
@@ -99,7 +111,6 @@ results(pr_reform(pr_firstname$likely_race), df$RACE)
 ```
 
 1c: average the two
-
 ```{r}
 pr_first_probs <- pr_firstname[,4:9]
 pr_last_probs <- pr_lastname[,4:9]
@@ -131,55 +142,26 @@ all_preds$pr_firstname <- pr_firstname$likely_race
 all_presd$pr_avg <- pr_avg$likely_race
 ```
 
+
+
+
 *METHOD 2*: wru
 ```{r}
 library(wru)
 census_api_key <- '07513b28b4cf6b6398a9a8838b0fc52ea632a290'
 
-# notes:
-# voter.file must have a 'surname' column
-# if using geolocation, must have a 'state' column with 'ga' or 'tx'
-#   'county' (3 chars) 'tract' 'block_group' (1 char) 'block' (4 chars) 'place' (5 chars)
-#   surname.year = 2020
-# predict_race()
-#   surname.year = 2020
-#   year = '2020'
-#   census.geo = 'county' 'tract' 'block_group' 'block' 'place'
-#   census.key
-#   age & sex - condition predictions on age/sex
-#   census.data - presaved census data from get_census_data
-#   party - column name in voter file of party registration (1D, 2R, 0O)
-#   names.to.use - 'surname, first' 
-# get_census_data()
-#   key
-#   states = c('GA')
-#   age, sex - condition on these? 
-#   year = '2020'
-#   census.geo = 'block' default
-#   county.list from voter.file?
+reform_wru <- function(preds) {
+  return (case_when(
+    preds == 'pred.whi' ~ 'WH',
+    preds == 'pred.bla' ~ 'BH',
+    preds == 'pred.asi' ~ 'AP',
+    preds == 'pred.his' ~ 'HP',
+    TRUE ~ 'OT',
+  ))
+}
 ```
 
-```{r}
-# tailor columns for desired wru inputs
-
-df$state <- 'GA'
-df$age <- 2023 - df$BIRTHDATE
-df$sex <- case_when(
-  df$GENDER == 'F' ~ 1,
-  df$GENDER == 'M' ~ 0,
-  TRUE ~ 3
-)
-
-cols <- c('first', 'surname', 'age', 'sex', 'COUNTY_CODE', 'state', 'RACE')
-df <- df[,cols]
-```
-
-```{r}
-rows <- c(2,70, 100, 327, 2242, 2955, 298, 59204, 46364, 949, 22643, 11264, 3114, 15856)
-df_small <- df[rows,] # for testing purposes
-```
-
-1a. surname-only matching (no geocoding)
+2a. surname-only matching (no geocoding)
 ```{r}
 future::plan(future::multisession)
 wru_surname <- wru::predict_race(voter.file = df, surname.only = T, surname.year = '2020')
@@ -188,44 +170,233 @@ results(wru_surname$preds, df$RACE)
 all_preds$wru_surname <- wru_surname$preds
 ```
 
-
-1b. county-level geolocation added to model
+2b. county-level geolocation
 ```{r}
-# deal with county codes:
-# county_codes <- read.csv('GWCounty_Number_List.csv') # just to see names
-# county_codes$fips <- read.csv('GA_FIPS_Codes.csv')$fips_county 
-
-
-fips <- read.csv('GA_FIPS_Codes.csv')$fips_county #alphabetical so it matches
-df$county <- str_pad(fips[df$COUNTY_CODE], 3, pad = '0')  # this is the FIPS county. just named 'county' b/c wru wants that
-
+census_data <- get_census_data(key = census_api_key, census.geo = 'tract', state = c('GA'), year = '2020')
 ```
 
 ```{r}
-df_wru <- predict_race(voter.file = df, census.geo = "county", census.key = census_api_key)
+df_wru <- predict_race(voter.file = df, census.geo = "county", census.key = census_api_key, year = '2020', census.data = census_data)
 
-all_preds$wru_geo <- apply(df_wru[,9:13], 1, function(x) paste0(names(df_wru[,9:13])[x == max(x)], collapse = '_'))
+county_preds <- apply(df_wru[,19:23], 1, function(x) paste0(names(df_wru[,19:23])[x == max(x)], collapse = '_'))
 
-all_preds$wru_geo <- case_when(
-  all_preds$wru_geo == 'pred.whi' ~ 'WH',
-  all_preds$wru_geo == 'pred.bla' ~ 'BH',
-  all_preds$wru_geo == 'pred.asi' ~ 'AP',
-  all_preds$wru_geo == 'pred.his' ~ 'HP',
-  TRUE ~ 'OT',
-)
+county_preds <- reform_wru(county_preds)
 ```
+
 ```{r}
-results(all_preds$wru_geo, all_preds$truth)
+results(county_preds, df$RACE)
+all_preds$wru_county <- county_preds
 ```
 
-*METHOD 3*: Mixed predictions (sandbox)
+
+2c. tract-level geolocation 
+```{r}
+# now we're going to try to get more specific census geocoding
+library(censusxy)
+
+census_data <- get_census_data(key = census_api_key, census.geo = 'tract', state = c('GA'), year = '2020')
+```
+
+```{r}
+df_geo <- cxy_geocode(df[1:1000,], street = "address_full", 
+            city = "RESIDENCE_CITY", 
+            state = "state", 
+            zip = "RESIDENCE_ZIPCODE", 
+            class = "dataframe", 
+            benchmark = 'Public_AR_Census2020', 
+            vintage = 'Census2020_Census2020', 
+            return= 'geographies')
+  
+  df_geo <- df_geo %>%
+    mutate(county = str_pad(as.character(cxy_county_id), 3, pad = '0'),
+           tract = str_pad(as.character(cxy_tract_id), 6, pad = '0'),
+           block = str_pad(as.character(cxy_block_id), 4, pad = '0')
+           ) %>%
+    filter(!is.na(county) & !is.na(tract) & !is.na(block)) %>%
+    filter(tract %in% census_data$GA$tract$tract[which(census_data$GA$tract$county == county)])
+  
+  # ugh
+  for (j in 1:nrow(df_geo)) {
+    if (!(df_geo$tract[j] %in% census_data$GA$tract$tract[which(census_data$GA$tract$county == df_geo$county[j])])) {
+      df_geo <- df_geo[-j,]
+    }
+  }
+  # ugh ^
+```
+
+```{r}
+df_wru <- predict_race(voter.file = df_geo, census.geo = "tract", census.key = census_api_key, year = '2020', census.data = census_data)
+
+tract_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+
+tract_preds <- reform_wru(tract_preds)
+```
+
+```{r}
+print('County-level predictions: ')
+results(county_preds, df$RACE)
+print('Tract-level predictions: ')
+results(tract_preds, df$RACE)
+```
+
+```{r}
+# iterate because it takes too long at this point to run on the whole thing
+cols <- c('sens_wh', 'ppv_wh', 'sens_bh', 'ppv_bh', 'sens_hp', 'ppv_hp', 'sens_ap', 'ppv_ap')
+df_acc_county <- data.frame(matrix(nrow = 10, ncol = length(cols)))
+colnames(df_acc_county) <- cols
+df_acc_tract <- df_acc_county
+df_acc_block <- df_acc_tract
+
+add_acc <- function(df_acc, r, preds, truth) {
+  row <- c()
+  for (i in c('WH', 'BH', 'HP', 'AP')) { 
+    corr <- sum(preds==i & preds==truth)
+    row <- c(row, corr / sum(truth==i), corr / sum(preds==i) )
+  }
+  df_acc[r,] <- row
+  return(df_acc)
+}
+
+for (i in 1:10) {
+  rows <- sample(nrow(df), 10000) # randomly sample 1000 rows
+  df_geo <- cxy_geocode(df[rows,], street = "address_full", 
+            city = "RESIDENCE_CITY", 
+            state = "state", 
+            zip = "RESIDENCE_ZIPCODE", 
+            class = "dataframe",
+            benchmark = 'Public_AR_Census2020',
+            vintage = 'Census2020_Census2020',
+            return= 'geographies')
+  
+  df_geo <- df_geo %>%
+    mutate(county = str_pad(as.character(cxy_county_id), 3, pad = '0'),
+           tract = str_pad(as.character(cxy_tract_id), 6, pad = '0'),
+           block = str_pad(as.character(cxy_block_id), 4, pad = '0')
+           ) %>%
+    filter(!is.na(county) & !is.na(tract) & !is.na(block))
+  # ugh
+  for (j in 1:nrow(df_geo)) {
+    if (!(df_geo$tract[j] %in% census_data_block$GA$tract$tract[which(census_data_block$GA$tract$county == df_geo$county[j])])) {
+      df_geo <- df_geo[-j,]
+    }
+    # if (!(df_geo$block[j] %in% census_data_block$GA$block$block[which(census_data_block$GA$block$tract == df_geo$tract[j])])) {
+    #   df_geo <- df_geo[-j,]
+    # }
+  }
+  # ugh ^
+  
+  # county preds
+  df_wru <- predict_race(voter.file = df_geo, census.geo = "county", census.key = census_api_key, year = '2020', census.data = census_data_block)
+  
+  county_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+  
+  county_preds <- reform_wru(county_preds)
+  
+  # tract preds
+  df_wru <- predict_race(voter.file = df_geo, census.geo = "tract", census.key = census_api_key, year = '2020', census.data = census_data_block)
+
+  tract_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+
+  tract_preds <- reform_wru(tract_preds)
+  
+  # block preds
+  df_wru <- predict_race(voter.file = df_geo, census.geo = "block", census.key = census_api_key, year = '2020', census.data = census_data_block)
+
+  block_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+
+  block_preds <- reform_wru(block_preds)
+  
+  # save accuracy vals
+  df_acc_county <- add_acc(df_acc_county, i, county_preds, df_geo$RACE)
+  df_acc_tract <- add_acc(df_acc_tract, i, tract_preds, df_geo$RACE)
+  df_acc_block <- add_acc(df_acc_block, i, block_preds, df_geo$RACE)
+}
+```
+
+
+```{r}
+cat('County-level prediction (across 10 random samples of 10000): \n')
+colMeans(df_acc_county)
+cat('\nTract-level prediction (across 10 random samples of 10000): \n')
+colMeans(df_acc_tract)
+cat('\nBlock-level prediction (across 10 random samples of 10000): \n')
+colMeans(df_acc_block)
+```
+
+2d. block-level predictions
+```{r}
+census_data_block <- get_census_data(key = census_api_key, census.geo = 'block', state = c('GA'), year = '2020')
+```
+
+```{r}
+# compare speed to tract-level and block_level once already have df_geo and census_data 
+df_wru <- predict_race(voter.file = df_geo, census.geo = "tract", census.key = census_api_key, year = '2020', census.data = census_data_block)
+
+tract_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+tract_preds <- reform_wru(tract_preds)
+
+df_wru <- predict_race(voter.file = df_geo, census.geo = "block", census.key = census_api_key, year = '2020', census.data = census_data_block)
+
+block_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+block_preds <- reform_wru(block_preds)
+```
+
+
+
+
+```{r}
+# block altogether
+census_data_block <- get_census_data(key = census_api_key, census.geo = 'block', state = c('GA'), year = '2020')
+
+df_geo_full <- cxy_geocode(df, street = "address_full", 
+            city = "RESIDENCE_CITY", 
+            state = "state", 
+            zip = "RESIDENCE_ZIPCODE", 
+            class = "dataframe",
+            benchmark = 'Public_AR_Census2020',
+            vintage = 'Census2020_Census2020',
+            return= 'geographies')
+df_geo_full
+
+df_wru <- predict_race(voter.file = df_geo, census.geo = "block", census.key = census_api_key, year = '2020', census.data = census_data)
+
+block_preds <- apply(df_wru[,27:31], 1, function(x) paste0(names(df_wru[,27:31])[x == max(x)], collapse = '_'))
+
+block_preds <- reform_wru(tract_preds)
+```
+
+
+
+
+
+*METHOD 3*: Mixing predictions
 ```{r}
 test <- case_when(
-  all_preds$wru_geo == 'AP' & all_preds$pr_avg == 'AP' & all_preds$et_wiki_full == 'AP' ~ 'AP',
+  all_preds$wru_geo == 'AP' | all_preds$pr_avg == 'AP' | (all_preds$et_fl_other == 'AP' & all_preds$et_fl == 'AP') ~ 'AP' ,
   T ~ 'WH'
 )
-results(test, all_preds$truth)
-# just looking for AP sens & PPV 
+
+corr <- sum(test=='AP' & test==all_preds$truth)
+sens <- corr / sum(all_preds$truth=='AP')
+ppv <- corr / sum(test=='AP')
+print(paste('Sensitivity:', round(sens,4), ' PPV:', round(ppv, 4)))
+
+# just looking for AP sens & PPV; ideally both are above 80%
+```
+
+```{r}
+all_preds$test_balanced <- test
+```
+
+```{r}
+# with this somewhat balanced solution, we'll see now how reliable it is across 10 random samples of 10k voters
+for (i in 1:10) { 
+  curr <- all_preds[sample(nrow(all_preds), 10000), ] # random 10k rows
+  corr <- sum(curr$test_balanced=='AP' & curr$test_balanced==curr$truth)
+  sens <- corr / sum(curr$truth=='AP')
+  ppv <- corr / sum(curr$test_balanced=='AP')
+  print(paste('Sensitivity:', round(sens,4), ' PPV:', round(ppv, 4)))
+}
 ```
 
 
