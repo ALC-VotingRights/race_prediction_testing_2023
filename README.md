@@ -22,6 +22,7 @@ Top Scorers:
 - WRU (surname + geocoding)
     AP: sens = 67%, PPV = 86%
     Slightly better on other races
+    (*Note*: discovered later that WRU can incorporate first/middle names if you are geocoding)
 - Predictrace (firstname + surname average)
     AP: sens = 64%, PPV = 89%
 - Combination of (1) and (2): wru_geo OR pr_avg 
@@ -35,4 +36,8 @@ Choose various different combinations to maximize sensitivity or PPV
     Sens = 98%, PPV = 60%
 
 
-More detailed results are discussed in results.pdf
+In sum, I recommend implementing WRU BISG with as high geocoding specificity as possible. I chose to use `censusxy` library to geocode entries at the block level. For entries that successfully geocode, use WRU to predict entries at the block level (with first, middle, and surname matching). For entries that don't, use the county code (present in most election files) and implement WRU at the county level. 
+
+I implement this geocoding + WRU BISG in this repository: [TX Voter File](https://github.com/ALC-VotingRights/TX_voterfile_2023). Look in the `scripts` folder for the steps in my process, and in particular the `scripts/4_geocode_and_predict.R` file.
+
+More detailed results are discussed in `_Race Prediction Methods Report.pdf`!
